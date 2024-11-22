@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <title>Editor de Grafuri</title>
+    <style>
+        /* Stilizare CSS */
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #202020;
+            color: #ffffff;
+            font-family: Arial, sans-serif;
+        }
+        #toolbar {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 10;
+        }
+        #toolbar button {
+            margin-right: 10px;
+            padding: 10px 20px;
+            background-color: #404040;
+            border: none;
+            color: #ffffff;
+            cursor: pointer;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        #toolbar button:hover {
+            background-color: #606060;
+        }
+        #message {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            z-index: 10;
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        #graphCanvas {
+            display: block;
+        }
+        #fileInput {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+<div id="toolbar">
+    <button id="exportBtn">Exportă Graf</button>
+    <button id="importBtn">Importă Graf</button>
+    <button id="deleteBtn">Șterge Nod</button>
+    <input type="file" id="fileInput" accept=".json">
+</div>
+<canvas id="graphCanvas"></canvas>
+<div id="message"></div>
+
+<script>
+    // Cod JavaScript
+
+    // Elemente globale
+    const canvas = document.getElementById('graphCanvas');
+    const ctx = canvas.getContext('2d');
+    const exportBtn = document.getElementById('exportBtn');
+    const importBtn = document.getElementById('importBtn');
+    const deleteBtn = document.getElementById('deleteBtn');
+    const message = document.getElementById('message');
+    const fileInput = document.getElementById('fileInput');
+
+    let nodes = [];
+    let edges = [];
+    let nodeCounter = 1;
+    let selectedNode = null;
+    let isDragging = false;
+    let isConnecting = false;
+    let connectStartNode = null;
+    let editingEdge = null;
+    let currentMode = 'select'; // 'select', 'move', 'connect'
+    let selectedEdge = null; // Muchia selectată pentru ștergere
+
+    // Redimensionează canvas-ul la dimensiunea ferestrei
+    function resizeCanvas() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        draw();
+    }
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    // Evenimente mouse
+    canvas.addEventListener('mousedown', onMouseDown);
+    canvas.addEventListener('mousemove', onMouseMove);
+    canvas.addEventListener('mouseup', onMouseUp);
+    canvas.addEventListener('contextmenu', onRightClick);
+
+    // Eveniment pentru ștergerea muchiei selectate
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Delete' && selectedEdge) {
+            edges = edges.filter(edge => edge !== selectedEdge);
+            selectedEdge = null;
+            draw();
+            showMessage('Muchia a fost ștearsă.');
+        }
+    });
+
+    function onMouseDown(e) {
+        const pos = getMousePos(e);
+        if (e.button === 0) { // Click stânga
+            const node = getNodeAtPos(pos);
+            if (isConnecting) {
+                if (node && connectStartNode && connectStartNode !== node) {
+                    // Adaugă muchie între noduri
+                    const weight = 1;
+                    // Evită duplicatele
+                    if (!edges.some(edge => (edge.from === connectStartNode && edge.to === node) || (edge.from === node && edge.to === connectStartNode))) {
+                        edges.push({ from: connectStartNode, to: node, weight });
+                    }
+                    isConnecting = false;
+                    connectStartNode = null;
+                    draw();
+                }
+            } else if (node) {
+                selectedNode = node;
+                isDragging = true;
+                selectedEdge = null; // Deselectează muchia dacă este selectat un nod
+            } else {
+                const edge = getEdgeAtPos(pos);
+                if (edge) {
+                    selectedEdge = edge; // Selectează muchia
+                    selectedNode = null; // Deselectează nodul dacă este selectată o muchie
+                    draw();
+                } else {
+                    selectedEdge = null; // Deselectează muchia dacă se face click în altă parte
+                }
+            }
+        }
+    }
+
+    function onMouseMove(e) {
+        const pos = getMousePos(e);
+        if (isDragging && selectedNode) {
+            selectedNode.x = pos.x;
+            selectedNode.y = pos.y;
+            draw();
+        }
+    }
+
+    function onMouseUp(e) {
+        if (e.button === 0) { // Click stânga
+            if (isDragging) {
+                isDragging = false;
+                selectedNode = null;
+            }
+        }
+    }
+
+    canvas.addEventListener('dblclick', (e) => {
+        const pos = getMousePos(e);
+        const node = getNodeAtPos(pos);
+        if (node) {
+            // Începe conectarea
+            isConnecting = true;
+            connectStartNode = node;
+            showMessage(`Conectează nodul ${node.number} la alt nod prin click pe el.`);
+        } else if (selectedEdge) {
+            // Dacă se face dublu click pe o muchie, șterge-o
+            edges = edges.filter(edge => edge !== selectedEdge);
+            selectedEdge = null;
+            draw();
+            showMessage('Muchia a fost ștearsă.');
+        }
+    });
+
+    function onRightClick(e) {
+        e.preventDefault();
+        const pos = getMousePos(e);
+        const node = getNodeAtPos(pos);
+        const edge = getEdgeAtPos(pos);
+        if (edge) {
+            const newWeight = prompt('Introduceți greutatea muchiei:', edge.weight);
+            if (newWeight !== null) {
+                edge.weight = parseInt(newWeight) || 1;
+                draw();
+            }
+        } else if (node) {
+            // Do nothing or maybe select the node
+        } else {
+            createNode(pos.x, pos.y);
+            draw();
+        }
+    }
+
+    function getMousePos(e) {
+        const rect = canvas.getBoundingClientRect();
+        return {
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top
+        };
+    }
+
+    function createNode(x, y) {
+        nodes.push({ x, y, number: nodeCounter++ });
+    }
+
+    function getNodeAtPos(pos) {
+        for (let node of nodes) {
+            const dx = pos.x - node.x;
+            const dy = pos.y - node.y;
+            if (Math.sqrt(dx * dx + dy * dy) < 25) {
+                return node;
+            }
+        }
+        return null;
+    }
+
+    function getEdgeAtPos(pos) {
+        for (let edge of edges) {
+            const midX = (edge.from.x + edge.to.x) / 2;
+            const midY = (edge.from.y + edge.to.y) / 2;
+            const dx = pos.x - midX;
+            const dy = pos.y - midY;
+            if (Math.sqrt(dx * dx + dy * dy) < 15) {
+                return edge;
+            }
+        }
+        return null;
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Desenează muchiile
+        ctx.lineWidth = 2;
+        ctx.font = '16px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        for (let edge of edges) {
+            ctx.strokeStyle = (edge === selectedEdge) ? '#ff0000' : '#ffffff';
+            ctx.fillStyle = (edge === selectedEdge) ? '#ff0000' : '#ffffff';
+            ctx.beginPath();
+            ctx.moveTo(edge.from.x, edge.from.y);
+            ctx.lineTo(edge.to.x, edge.to.y);
+            ctx.stroke();
+
+            // Desenează greutatea
+            const midX = (edge.from.x + edge.to.x) / 2;
+            const midY = (edge.from.y + edge.to.y) / 2;
+            ctx.fillText(edge.weight, midX, midY);
+        }
+
+        // Desenează nodurile
+        for (let node of nodes) {
+            ctx.fillStyle = '#ffcc00';
+            ctx.beginPath();
+            ctx.arc(node.x, node.y, 25, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Desenează numărul nodului
+            ctx.fillStyle = '#000000';
+            ctx.font = '18px Arial';
+            ctx.fillText(node.number, node.x, node.y);
+        }
+
+        if (isConnecting && connectStartNode) {
+            // Desenează linia de conectare
+            ctx.strokeStyle = '#00ff00';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(connectStartNode.x, connectStartNode.y);
+            ctx.lineTo(lastMousePos.x, lastMousePos.y);
+            ctx.stroke();
+        }
+    }
+
+    let lastMousePos = { x: 0, y: 0 };
+    canvas.addEventListener('mousemove', (e) => {
+        lastMousePos = getMousePos(e);
+        if (isConnecting) {
+            draw();
+        }
+    });
+
+    // Butoane
+    exportBtn.addEventListener('click', () => {
+        const graphData = {
+            nodes,
+            edges: edges.map(edge => ({
+                from: edge.from.number,
+                to: edge.to.number,
+                weight: edge.weight
+            }))
+        };
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(graphData));
+        const downloadAnchorNode = document.createElement('a');
+        downloadAnchorNode.setAttribute("href", dataStr);
+        downloadAnchorNode.setAttribute("download", "graf.json");
+        document.body.appendChild(downloadAnchorNode);
+        downloadAnchorNode.click();
+        downloadAnchorNode.remove();
+        showMessage('Graful a fost exportat.');
+    });
+
+    importBtn.addEventListener('click', () => {
+        fileInput.click();
+    });
+
+    fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) {
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const graphData = JSON.parse(e.target.result);
+                nodes = graphData.nodes.map(n => ({ ...n }));
+                nodeCounter = nodes.length + 1;
+                edges = graphData.edges.map(edge => ({
+                    from: nodes.find(n => n.number === edge.from),
+                    to: nodes.find(n => n.number === edge.to),
+                    weight: edge.weight
+                }));
+                selectedEdge = null;
+                draw();
+                showMessage('Graful a fost importat.');
+            } catch (err) {
+                showMessage('Eroare la importarea grafului.');
+            }
+        };
+        reader.readAsText(file);
+    });
+
+    deleteBtn.addEventListener('click', () => {
+        if (nodes.length > 0) {
+            const nodeToDelete = nodes.pop();
+            edges = edges.filter(edge => edge.from !== nodeToDelete && edge.to !== nodeToDelete);
+            nodeCounter--;
+            draw();
+            showMessage(`Nodul ${nodeToDelete.number} a fost șters.`);
+        } else {
+            showMessage('Nu există noduri de șters.');
+        }
+    });
+
+    function showMessage(msg) {
+        message.textContent = msg;
+        setTimeout(() => {
+            message.textContent = '';
+        }, 3000);
+    }
+
+    draw();
+</script>
+
+</body>
+</html>

@@ -243,7 +243,7 @@ def save_graph():
                 if edge not in edges_set:
                     edges_set.add(edge)
                     f.write(f'{node.number} {dest.number} {weight}\n')
-    print('Graful a fost incarcat din fisierul graph.txt')
+    print('Graful a fost salvat in fisierul graph.txt')
 
 # Funcție pentru încărcarea grafului dintr-un fișier text
 def load_graph():
